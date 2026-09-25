@@ -1,12 +1,12 @@
-# Manual Clase 5 — Parte 2: Práctica de Laboratorio, Errores y Soluciones
+# Manual Clase 5 — Ejercicio Parte 2: Pods en Podman, Errores y Soluciones
 
-Este documento recopila la **ejecución paso a paso del laboratorio práctico de Pods en Podman**, documentando cada uno de los comandos reales ejecutados en la máquina virtual Rocky Linux, las salidas obtenidas, todos los **errores técnicos encontrados**, su causa raíz (post-mortem) y la **solución definitiva aplicada** en cada caso.
+Este documento recopila la **ejecución paso a paso del Ejercicio Parte 2 del laboratorio práctico de Pods en Podman**, documentando cada uno de los comandos reales ejecutados en la máquina virtual Rocky Linux, las salidas obtenidas, todos los **errores técnicos encontrados**, su causa raíz (post-mortem) y la **solución definitiva aplicada** en cada caso.
 
 ---
 
 ## 1. Resumen de la Arquitectura Desplegada
 
-El objetivo fue construir e implementar un **Pod multicontenedor** (`lab-pod`) que simula un entorno productivo de microservicios:
+El objetivo de este Ejercicio Parte 2 fue construir e implementar un **Pod multicontenedor** (`lab-pod`) que simula un entorno productivo de microservicios:
 
 ```text
                                [ Host: Rocky Linux ]
@@ -35,6 +35,36 @@ El objetivo fue construir e implementar un **Pod multicontenedor** (`lab-pod`) q
 ---
 
 ## 2. Bitácora de Ejecución Paso a Paso
+
+### Fase 0: Ejercicios Preliminares con Pods Básicos
+
+Antes de crear el pod de laboratorio, se exploró el ciclo de vida básico de los pods:
+
+```bash
+# 1. Crear un pod con mapeo de puertos
+podman pod create --name mypod01 -p 8085:8080
+podman pod ls
+podman ps --pod
+
+# 2. Crear un segundo pod sin puertos expuestos
+podman pod create --name mypod
+podman pod ps
+
+# 3. Lanzar un contenedor interactivo dentro del pod
+podman run -dit --name myubi --pod mypod ubuntu /bin/bash
+podman ps -a --pod
+
+# 4. Probar comportamiento de error al intentar pasar --network a un contenedor en pod
+# (Demostración de que la red es exclusiva del Pod, no del contenedor individual)
+podman run -dit --name myhttp --pod mypod --network prod -p 8090:80 nginx
+# Error esperado: cannot set network when creating a container in a pod
+
+# 5. Detener el pod y verificar que todos sus contenedores se detienen en cascada
+podman pod stop mypod
+podman ps -a --pod
+```
+
+---
 
 ### Fase 1: Creación de la Aplicación API Python y Containerfile
 
