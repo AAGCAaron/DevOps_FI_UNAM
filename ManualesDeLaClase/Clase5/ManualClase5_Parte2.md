@@ -247,6 +247,58 @@ cat lab-pod.yaml
 
 ---
 
+### Fase 5: Arranque Automático con systemd y Comprobación tras Reinicio
+
+Para garantizar alta disponibilidad y persistencia ante reinicios del sistema operativo de la máquina virtual:
+
+#### 1. Generación de unidades de servicio systemd con Podman:
+```bash
+podman generate systemd --files --name lab-pod
+```
+Archivos generados:
+- `/root/pod-lab-pod.service`
+- `/root/container-lab-pod-lab-api.service`
+- `/root/container-lab-pod-lab-db.service`
+
+#### 2. Instalación en el directorio de servicios de systemd del usuario:
+```bash
+mkdir -p $HOME/.config/systemd/user/
+mv *.service $HOME/.config/systemd/user/
+```
+
+#### 3. Configuración de persistencia (Linger) y recarga de daemons:
+```bash
+loginctl enable-linger root
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user daemon-reload
+```
+
+#### 4. Habilitación del servicio del Pod:
+```bash
+systemctl --user enable pod-lab-pod.service
+systemctl --user is-enabled pod-lab-pod.service # Devuelve: enabled
+```
+
+#### 5. Prueba de reinicio y verificación post-boot:
+```bash
+reboot
+```
+
+Tras reiniciar y volver a conectar por SSH:
+```bash
+podman ps -a --pod
+```
+**Resultado obtenido:**
+```text
+CONTAINER ID  IMAGE                           COMMAND         STATUS      PORTS                              NAMES               POD ID        PODNAME
+93d29ed7da8e                                                  Up 7 hours  0.0.0.0:8080->8080/tcp             7ed610636a45-infra  7ed610636a45  lab-pod
+1344597df9cc  docker.io/library/postgres:16   postgres        Up 7 hours  0.0.0.0:8080->8080/tcp, 5432/tcp   lab-pod-lab-db      7ed610636a45  lab-pod
+d9c1bb6bbb6c  localhost/lab-api:1.0           python api.py   Up 7 hours  0.0.0.0:8080->8080/tcp             lab-pod-lab-api     7ed610636a45  lab-pod
+```
+*Demostración: systemd detectó el arranque del sistema, levantó el contenedor `infra` y posteriormente inició en orden de dependencias `lab-pod-lab-db` y `lab-pod-lab-api` sin intervención humana.*
+
+---
+
 ## 3. Catálogo de Errores Presentados y Cómo se Resolvieron
 
 A continuación se detalla cada fallo ocurrido durante la sesión, su explicación técnica y la solución implementada:
