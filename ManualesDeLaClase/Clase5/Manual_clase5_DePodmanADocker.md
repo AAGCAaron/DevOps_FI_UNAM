@@ -20,6 +20,7 @@
 9. [Publicación Automatizada con CI/CD (GitHub Actions)](#9-publicación-automatizada-con-cicd-github-actions)
 10. [Retos y Buenas Prácticas de Ingeniería](#10-retos-y-buenas-prácticas-de-ingeniería)
 11. [Guía de Ejecución Paso a Paso en la Máquina Virtual](#11-guía-de-ejecución-paso-a-paso-en-la-máquina-virtual)
+12. [Bitácora de Ejecución Real, Evidencias y Catálogo de Errores Resueltos](#12-bitácora-de-ejecución-real-evidencias-y-catálogo-de-errores-resueltos)
 
 ---
 
@@ -634,3 +635,194 @@ done
 # 9. Verificar la publicacion con Skopeo
 skopeo list-tags docker://"$REPO"
 ```
+
+---
+
+## 12. Bitácora de Ejecución Real, Evidencias y Catálogo de Errores Resueltos
+
+Esta sección documenta la **ejecución práctica real** llevada a cabo en la máquina virtual Rocky Linux, incluyendo las salidas exactas de la consola, los problemas técnicos encontrados y las soluciones implementadas.
+
+---
+
+### 12.1 Ejecución y Resultados Obtenidos
+
+#### A) Compilación exitosa con argumentos dinámicos
+Se compilaron los metadatos RFC 3339 y la versión `1.0.0` mediante `podman build`:
+```text
+Successfully tagged localhost/bitacora-api:1.0.0
+ec4361649b83b8d88a60c258e76ebd477002c14efb5f60371b82555c0af3aaaa
+```
+
+#### B) Prueba funcional en puerto alterno (8085)
+```bash
+curl -s http://localhost:8085 ; echo
+curl -s http://localhost:8085/health ; echo
+```
+**Salida obtenida:**
+```json
+{
+  "servicio": "bitacora-api",
+  "version": "1.0.0",
+  "commit": "manual",
+  "host": "09487f985ea7",
+  "arquitectura": "x86_64",
+  "python": "3.11.16"
+}
+{
+  "status": "ok"
+}
+```
+
+#### C) Publicación de etiquetas semánticas en Docker Hub (`podman push`)
+```text
+Getting image source signatures
+Copying blob d98e01343881 done   |
+Copying blob 3678bb828654 skipped: already exists
+Copying blob db840d086b65 skipped: already exists
+Copying blob f9efa1b83d06 skipped: already exists
+Copying blob 6310eb16bf42 skipped: already exists
+Copying config ec4361649b done   |
+Writing manifest to image destination
+```
+*Las subsecuentes etiquetas (`1.0`, `1`, `latest`) reutilizaron las capas existentes (`skipped: already exists`), optimizando el ancho de banda y tiempo de subida.*
+
+#### D) Verificación remota con Skopeo
+```bash
+skopeo list-tags docker://docker.io/agcaaron/bitacora-api
+```
+**Respuesta del servidor de Docker Hub:**
+```json
+{
+    "Repository": "docker.io/agcaaron/bitacora-api",
+    "Tags": [
+        "1",
+        "1.0",
+        "1.0.0",
+        "latest"
+    ]
+}
+```
+
+#### E) Prueba de fuego: Descarga y ejecución desde la nube
+Se eliminó la imagen local y se descargó directamente desde Docker Hub para probar en el puerto `8086`:
+```text
+Untagged: docker.io/agcaaron/bitacora-api:1.0.0
+Untagged: localhost/bitacora-api:1.0.0
+Trying to pull docker.io/agcaaron/bitacora-api:1.0.0...
+Copying blob ... skipped: already exists
+Writing manifest to image destination
+ec4361649b83b8d88a60c258e76ebd477002c14efb5f60371b82555c0af3aaaa
+```
+
+---
+
+### 12.2 Catálogo de Errores Presentados y Cómo se Resolvieron
+
+---
+
+#### Error 1: Conflicto de puerto 8080 y nombre de contenedor ocupado
+
+##### Mensaje del error:
+```text
+Error: cannot listen on the TCP port: listen tcp4 :8080: bind: address already in use
+Error: creating container storage: the container name "prueba" is already in use by 7a89...
+```
+
+##### Causa técnica:
+El puerto `8080` estaba siendo ocupado por el pod `lab-pod` que se configuró previamente como servicio de `systemd` y que arrancó automáticamente tras el reinicio del sistema. Además, el intento fallido dejó registrado el nombre de contenedor `prueba`.
+
+##### Solución aplicada:
+1. Eliminar el contenedor fallido:
+   ```bash
+   podman rm -f prueba
+   ```
+2. Realizar la prueba en un puerto libre alternativo (por ejemplo `8085` o `8081`):
+   ```bash
+   podman run -d --name prueba -p 8085:8080 bitacora-api:"$VERSION"
+   ```
+
+---
+
+#### Error 2: Error de formato en la referencia de imagen (`invalid reference format`)
+
+##### Comando ejecutado:
+```bash
+podman tag bitacora-api:"$VERSION" "$REPO":"$VERSION"
+```
+
+##### Mensaje del error:
+```text
+Error: parsing reference "bitacora-api:": invalid reference format
+```
+
+##### Causa técnica:
+La variable de entorno `VERSION` no estaba asignada en la sesión activa de la terminal (había caducado al abrir una nueva subshell), lo que ocasionaba que Podman interpretara la etiqueta como una cadena vacía (`bitacora-api:`).
+
+##### Solución aplicada:
+Definir explícitamente las variables antes de invocar los comandos de etiquetado:
+```bash
+VERSION=1.0.0
+REPO=docker.io/agcaaron/bitacora-api
+```
+
+---
+
+#### Error 3: Token con permisos insuficientes (`access token has insufficient scopes`)
+
+##### Comando ejecutado:
+```bash
+podman push docker.io/agcaaron/bitacora-api:1.0.0
+```
+
+##### Mensaje del error:
+```text
+Error: trying to reuse blob ... at destination: unable to retrieve auth token:
+invalid username/password: unauthorized: access token has insufficient scopes
+```
+
+##### Causa técnica:
+El primer Personal Access Token (PAT) generado en Docker Hub fue configurado con permisos de **solo lectura (Read-only)**. Para realizar un `push` a un repositorio, Docker Hub requiere autorización explícita de escritura.
+
+##### Solución aplicada:
+1. Se generó un nuevo token en Docker Hub seleccionando permisos **`Read & Write`**.
+2. Se renovó la sesión en la terminal:
+   ```bash
+   echo "dckr_pat_..." | podman login docker.io --username agcaaron --password-stdin
+   ```
+3. El comando `podman push` se completó exitosamente de inmediato.
+
+---
+
+#### Error 4: Comando `skopeo` no disponible en el sistema
+
+##### Comando ejecutado:
+```bash
+skopeo list-tags docker://docker.io/agcaaron/bitacora-api
+```
+
+##### Mensaje del error:
+```text
+-bash: skopeo: orden no encontrada
+```
+
+##### Causa técnica:
+La herramienta de inspección remota de registros OCI (`skopeo`) no venía preinstalada en el entorno mínimo de Rocky Linux.
+
+##### Solución aplicada:
+Instalar la herramienta mediante el gestor de paquetes de la distribución:
+```bash
+dnf install -y skopeo
+```
+
+---
+
+### 12.3 Repositorio Público Verificado
+
+El artefacto final de este ejercicio se encuentra disponible públicamente en Docker Hub:
+🔗 **URL Oficial:** [https://hub.docker.com/r/agcaaron/bitacora-api](https://hub.docker.com/r/agcaaron/bitacora-api)  
+📦 **Tags Disponibles:** `1.0.0`, `1.0`, `1`, `latest`  
+🚀 **Comando de Despliegue Universal:**
+```bash
+podman run -d -p 8080:8080 docker.io/agcaaron/bitacora-api:1.0.0
+```
+
